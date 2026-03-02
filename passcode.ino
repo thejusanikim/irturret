@@ -167,6 +167,11 @@ void loop() {
         */
         IrReceiver.resume(); // Enable receiving of the next value
 
+        // Ignore repeat signals - prevents a single button hold from adding
+        // multiple digits to the passcode buffer or triggering actions repeatedly
+        if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) {
+            return;
+        }
 
         /*
         * Finally, check the received data and perform actions according to the received command
