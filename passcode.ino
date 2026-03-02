@@ -31,7 +31,7 @@
 #pragma endregion LICENSE
 
 //////////////////////////////////////////////////
-              //  LIBRARIES  //
+                //  LIBRARIES  //
 //////////////////////////////////////////////////
 #pragma region LIBRARIES
 
@@ -49,7 +49,7 @@
 ** if you want to add other remotes (as long as they're on the same protocol above):
 ** press the desired button and look for a hex code similar to those below (ex: 0x11)
 ** then add a new line to #define newCmdName 0x11,
-** and add a case to the switch statement like case newCmdName:
+** and add a case to the switch statement like case newCmdName: 
 ** this will let you add new functions to buttons on other remotes!
 ** the best remotes to try are cheap LED remotes, some TV remotes, and some garage door openers
 */
@@ -82,6 +82,11 @@
 //////////////////////////////////////////////////
 #pragma region PINS AND PARAMS
 //this is where we store global variables!
+#define PASSCODE_LENGTH 8
+#define CORRECT_PASSCODE "12112014" // Change this to your desired passcode
+char passcode[PASSCODE_LENGTH + 1] = ""; // Buffer to store user input passcode
+bool passcodeEntered = false; // Flag to indicate if passcode has been entered correctly
+
 Servo yawServo; //names the servo responsible for YAW rotation, 360 spin around the base
 Servo pitchServo; //names the servo responsible for PITCH rotation, up and down tilt
 Servo rollServo; //names the servo responsible for ROLL rotation, spins the barrel to fire darts
@@ -89,6 +94,10 @@ Servo rollServo; //names the servo responsible for ROLL rotation, spins the barr
 int yawServoVal = 90; //initialize variables to store the current value of each servo
 int pitchServoVal = 100;
 int rollServoVal = 90;
+
+int lastYawServoVal = 90; //initialize variables to store the last value of each servo
+int lastPitchServoVal = 90; 
+int lastRollServoVal = 90;
 
 int pitchMoveSpeed = 8; //this variable is the angle added to the pitch servo to control how quickly the PITCH servo moves - try values between 3 and 10
 int yawMoveSpeed = 90; //this variable is the speed controller for the continuous movement of the YAW servo motor. It is added or subtracted from the yawStopSpeed, so 0 would mean full speed rotation in one direction, and 180 means full rotation in the other. Try values between 10 and 90;
@@ -102,17 +111,12 @@ int rollPrecision = 158; // this variable represents the time in milliseconds th
 int pitchMax = 150; // this sets the maximum angle of the pitch servo to prevent it from crashing, it should remain below 180, and be greater than the pitchMin
 int pitchMin = 33; // this sets the minimum angle of the pitch servo to prevent it from crashing, it should remain above 0, and be less than the pitchMax
 
-// ---- Passcode variables ----
-bool passcodeEntered = false;       // tracks whether the turret is unlocked
-String enteredCode = "";            // buffer for digits typed so far
-const String correctCode = "12112014"; // the secret passcode
-
 void shakeHeadYes(int moves = 3); //function prototypes for shakeHeadYes and No for proper compiling
 void shakeHeadNo(int moves = 3);
 #pragma endregion PINS AND PARAMS
 
 //////////////////////////////////////////////////
-              //  S E T U P  //
+                //  S E T U P  //
 //////////////////////////////////////////////////
 #pragma region SETUP
 void setup() { //this is our setup function - it runs once on start up, and is basically where we get everything "set up"
@@ -132,134 +136,24 @@ void setup() { //this is our setup function - it runs once on start up, and is b
     printActiveIRProtocols(&Serial);
     Serial.println(F("at pin 9"));
 
-    homeServos(); //set servo motors to home position
-    Serial.println("LOCKED - Enter passcode to unlock");
+  homeServos(); //set servo motors to home position
 }
 #pragma endregion SETUP
 
 //////////////////////////////////////////////////
-               //  L O O P  //
+                //  L O O P  //
 //////////////////////////////////////////////////
 #pragma region LOOP
 
 void loop() {
-
-    /*
-    * Check if received data is available and if yes, try to decode it.
-    */
-    if (IrReceiver.decode()) {
-
-        /*
-        * Print a short summary of received data
-        */
-        IrReceiver.printIRResultShort(&Serial);
-        IrReceiver.printIRSendUsage(&Serial);
-        if (IrReceiver.decodedIRData.protocol == UNKNOWN) { //command garbled or not recognized
-            Serial.println(F("Received noise or an unknown (or not yet enabled) protocol - if you wish to add this command, define it at the top of the file with the hex code printed below (ex: 0x8)"));
-            // We have an unknown protocol here, print more info
-            IrReceiver.printIRResultRawFormatted(&Serial, true);
-        }
-        Serial.println();
-
-        /*
-        * !!!Important!!! Enable receiving of the next value,
-        * since receiving has stopped after the end of the current received data packet.
-        */
+    if (IrReceiver.decode()) { //if we have recieved a comman this loop...
+        int command = IrReceiver.decodedIRData.command; //store it in a variable
         IrReceiver.resume(); // Enable receiving of the next value
-
-        // Ignore repeat signals - prevents a single button hold from adding
-        // multiple digits to the passcode buffer or triggering actions repeatedly
-        if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) {
-            return;
-        }
-
-        /*
-        * Finally, check the received data and perform actions according to the received command
-        */
-
-        switch(IrReceiver.decodedIRData.command){ //this is where the commands are handled
-
-            // ---- Movement: only works when unlocked ----
-            case up:
-              if (passcodeEntered) upMove(1);
-              break;
-
-            case down:
-              if (passcodeEntered) downMove(1);
-              break;
-
-            case left:
-              if (passcodeEntered) leftMove(1);
-              break;
-
-            case right:
-              if (passcodeEntered) rightMove(1);
-              break;
-
-            case ok: // fire: only works when unlocked
-              if (passcodeEntered) fire();
-              break;
-
-            // ---- Star: re-lock when unlocked ----
-            case star:
-              if (passcodeEntered) {
-                passcodeEntered = false;
-                enteredCode = "";
-                shakeHeadNo(2);
-                Serial.println("LOCKED");
-              }
-              break;
-
-            // ---- Number buttons: enter passcode digits when locked ----
-            // When unlocked, button 3 triggers the SPIN ATTACK (fire + spin right)
-            case cmd1:
-              if (!passcodeEntered) addPasscodeDigit('1');
-              break;
-
-            case cmd2:
-              if (!passcodeEntered) addPasscodeDigit('2');
-              break;
-
-            case cmd3:
-              if (!passcodeEntered) {
-                addPasscodeDigit('3');   // type digit while locked
-              } else {
-                spinAttack();            // SPIN ATTACK when unlocked!
-              }
-              break;
-
-            case cmd4:
-              if (!passcodeEntered) addPasscodeDigit('4');
-              break;
-
-            case cmd5:
-              if (!passcodeEntered) addPasscodeDigit('5');
-              break;
-
-            case cmd6:
-              if (!passcodeEntered) addPasscodeDigit('6');
-              break;
-
-            case cmd7:
-              if (!passcodeEntered) addPasscodeDigit('7');
-              break;
-
-            case cmd8:
-              if (!passcodeEntered) addPasscodeDigit('8');
-              break;
-
-            case cmd9:
-              if (!passcodeEntered) addPasscodeDigit('9');
-              break;
-
-            case cmd0:
-              if (!passcodeEntered) addPasscodeDigit('0');
-              break;
-
-        }
+        handleCommand(command); // Handle the received command through switch statements
     }
-    delay(5);
+    delay(5); //delay for smoothness
 }
+
 
 #pragma endregion LOOP
 
@@ -268,37 +162,162 @@ void loop() {
 //////////////////////////////////////////////////
 #pragma region FUNCTIONS
 
+void checkPasscode() {
+    if (strcmp(passcode, CORRECT_PASSCODE) == 0) {
+        // Correct passcode entered, shake head yes
+        Serial.println("CORRECT PASSCODE");
+        passcodeEntered = true;
+        shakeHeadYes();
+    } else {
+        // Incorrect passcode entered, shake head no
+        passcodeEntered = false;
+        shakeHeadNo();
+        Serial.println("INCORRECT PASSCODE");
+    }
+    passcode[0] = '\0'; // Reset passcode buffer
+}
+
 void addPasscodeDigit(char digit) {
-    enteredCode += digit;
-    Serial.print("Entered: ");
-    Serial.println(enteredCode);
-    if (enteredCode.length() == correctCode.length()) {
-        if (enteredCode == correctCode) {
-            Serial.println("UNLOCKED");
-            passcodeEntered = true;
-            shakeHeadYes(3); // nod yes to confirm unlock
-        } else {
-            Serial.println("WRONG CODE - try again");
-            shakeHeadNo(3);  // shake no to indicate wrong code
-        }
-        enteredCode = ""; // always reset buffer after a full attempt
+    if (!passcodeEntered && digit >= '0' && digit <= '9' && strlen(passcode) < PASSCODE_LENGTH) {
+        strncat(passcode, &digit, 1); //adds a digit to the passcode
+        Serial.println(passcode); //print the passcode to Serial
+    } else if (strlen(passcode) > PASSCODE_LENGTH+1){
+      passcode[0] = '\0'; // Reset passcode buffer
+      Serial.println(passcode);
     }
 }
 
-void spinAttack() {
-    // Fire and spin right simultaneously:
-    // roll servo (firing) and yaw servo (spinning) are independent,
-    // so starting the roll motor and then moving the yaw produces both at once.
-    Serial.println("SPIN ATTACK!");
-    rollServo.write(rollStopSpeed + rollMoveSpeed); // start firing (roll motor on)
-    for (int i = 0; i < 4; i++) {                  // spin right ~360 degrees (4 quarter-turns)
-        yawServo.write(yawStopSpeed - yawMoveSpeed);
-        delay(yawPrecision);
-        yawServo.write(yawStopSpeed);
-        delay(5);
+void handleCommand(int command) {
+    if((IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) && !passcodeEntered){ // this checks to see if the command is a repeat
+    Serial.println("DEBOUNCING REPEATED NUMBER - IGNORING INPUT");
+    return; //discarding the repeated numbers prevent you from accidentally inputting a number twice
     }
-    rollServo.write(rollStopSpeed);                 // stop firing
-    delay(5);
+
+    switch (command) {
+        case up:
+            if (passcodeEntered) {
+                // Handle up command
+                upMove(1);
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case down:
+            if (passcodeEntered) {
+                // Handle down command
+                downMove(1);
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case left:
+            if (passcodeEntered) {
+                // Handle left command
+                leftMove(1);
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case right:
+            if (passcodeEntered) {
+              // Handle right command
+              rightMove(1);
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case ok:
+            if (passcodeEntered) {
+                // Handle fire command
+                fire();
+                Serial.println("FIRE");
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case star:
+            if (passcodeEntered) {
+              Serial.println("LOCKING");
+                // Return to locked mode
+                passcodeEntered = false;
+            } else {
+                //shakeHeadNo();
+            }
+            break;
+
+        case cmd1: // Add digit 1 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('1');
+            }
+            break;
+
+        case cmd2: // Add digit 2 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('2');
+            }
+            break;
+
+        case cmd3: // Add digit 3 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('3');
+            }
+            break;
+
+        case cmd4: // Add digit 4 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('4');
+            }
+            break;
+
+        case cmd5: // Add digit 5 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('5');
+            }
+            break;
+
+        case cmd6: // Add digit 6 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('6');
+            }
+            break;
+
+        case cmd7: // Add digit 7 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('7');
+            }
+            break;
+
+        case cmd8: // Add digit 8 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('8');
+            }
+            break;
+
+        case cmd9: // Add digit 9 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('9');
+            }
+            break;
+
+        case cmd0: // Add digit 0 to passcode
+            if (!passcodeEntered) {
+                addPasscodeDigit('0');
+            }
+            break;
+
+        default:
+            // Unknown command, do nothing
+            Serial.println("Command Read Failed or Unknown, Try Again");
+            break;
+    }
+    if (strlen(passcode) == PASSCODE_LENGTH){
+        checkPasscode();
+    }
 }
 
 void leftMove(int moves){ // function to move left
@@ -358,7 +377,7 @@ void fireAll() { //function to fire all 6 darts at once
     rollServo.write(rollStopSpeed);//stop rotating the servo
     delay(5); // delay for smoothness
     Serial.println("FIRING ALL");
-}
+}    
 
 void homeServos(){ // sends servos to home positions
     yawServo.write(yawStopSpeed); //setup YAW servo to be STOPPED (90)
@@ -421,3 +440,5 @@ void shakeHeadNo(int moves = 3) {
 //////////////////////////////////////////////////
                //  END CODE  //
 //////////////////////////////////////////////////
+
+  
